@@ -1,0 +1,4 @@
+fastapi
+uvicorn[standard]
+groq
+youtube-transcript-api>=1.0.0

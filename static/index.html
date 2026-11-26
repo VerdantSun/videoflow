@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Videoflow: turn any YouTube video into answers</title>
+<meta name="description" content="Paste a YouTube link and watch it run: transcript, summary, then a chat that answers from what was actually said.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%23FF6D5A%22/><circle cx=%228%22 cy=%2216%22 r=%223.5%22 fill=%22white%22/><circle cx=%2224%22 cy=%2210%22 r=%223.5%22 fill=%22white%22/><circle cx=%2224%22 cy=%2222%22 r=%223.5%22 fill=%22white%22/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<style>
+:root{
+  --bg:#110F1A; --panel:#181624; --node:#201D2E; --line:#322E47; --line-2:#463F63;
+  --text:#F4F2FA; --muted:#A09BB8; --coral:#FF6D5A; --coral-ink:#2B0A05; --ok:#2FD08A; --err:#FF7A7A;
+  --sans:'Geist',system-ui,-apple-system,'Segoe UI',sans-serif; --mono:'Geist Mono',ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:5rem}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:inherit}
+.wrap{max-width:1160px;margin:0 auto;padding:0 1.5rem}
+:focus-visible{outline:2px solid var(--coral);outline-offset:2px}
+
+/* top bar */
+.top{position:sticky;top:0;z-index:20;background:rgba(17,15,26,.85);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;justify-content:space-between;height:64px}
+.logo{display:flex;align-items:center;gap:.6rem;font-weight:700;font-size:1.15rem;text-decoration:none;letter-spacing:-.01em}
+.top nav{display:flex;gap:1.75rem}
+.top nav a{color:var(--muted);text-decoration:none;font-size:.95rem}
+.top nav a:hover{color:var(--text)}
+@media(max-width:720px){.top nav{display:none}}
+
+/* buttons */
+.btn{display:inline-flex;align-items:center;gap:.5rem;font:600 .95rem var(--sans);border-radius:10px;border:1px solid var(--line-2);background:transparent;color:var(--text);padding:.6rem 1.1rem;cursor:pointer;text-decoration:none;transition:border-color .15s,background .15s}
+.btn:hover:not(:disabled){border-color:var(--text)}
+.btn:disabled{opacity:.65;cursor:progress}
+.btn.coral{background:var(--coral);border-color:var(--coral);color:var(--coral-ink)}
+.btn.coral:hover:not(:disabled){background:#ff8272;border-color:#ff8272}
+.btn.lg{padding:.8rem 1.4rem;font-size:1rem}
+
+/* hero */
+.hero{padding:clamp(3rem,8vw,6rem) 0 2.5rem}
+h1{font-size:clamp(2.5rem,6.2vw,4.6rem);line-height:1.04;letter-spacing:-.035em;font-weight:700;margin:0 0 1.25rem;max-width:15ch}
+.lede{color:var(--muted);font-size:clamp(1.05rem,2vw,1.25rem);max-width:38rem;margin:0}
+
+/* canvas */
+.canvas{position:relative;border:1px solid var(--line);border-radius:20px;padding:clamp(1.25rem,3vw,2.5rem);
+  background-color:#0E0C16;background-image:radial-gradient(#2B2740 1.2px,transparent 1.2px);background-size:22px 22px;overflow:hidden}
+#edges{position:absolute;inset:0;pointer-events:none;z-index:0}
+#edges path{fill:none;stroke:var(--line-2);stroke-width:2;transition:stroke .3s}
+#edges path[data-state=running]{stroke:var(--coral);stroke-dasharray:6 6;animation:flow .6s linear infinite}
+#edges path[data-state=success]{stroke:var(--ok)}
+@keyframes flow{to{stroke-dashoffset:-12}}
+.nodes{position:relative;z-index:1;display:grid;grid-template-columns:1.55fr 1fr 1.1fr 1fr;gap:clamp(36px,5vw,64px);align-items:center}
+.node{position:relative;background:var(--node);border:1px solid var(--line);border-radius:14px;padding:1rem;transition:border-color .2s,box-shadow .2s}
+.node[data-state=running]{border-color:var(--coral);box-shadow:0 0 0 4px rgba(255,109,90,.14)}
+.node[data-state=success]{border-color:rgba(47,208,138,.55)}
+.node[data-state=error]{border-color:var(--err)}
+.node.link{cursor:pointer}
+.nh{display:flex;gap:.7rem;align-items:center;margin-bottom:.8rem}
+.ico{flex:none;width:34px;height:34px;border-radius:9px;background:rgba(255,109,90,.14);color:var(--coral);display:grid;place-items:center}
+.ico svg{width:18px;height:18px}
+.nt{font-weight:600;line-height:1.2}
+.ns{color:var(--muted);font-size:.82rem;line-height:1.3}
+.port{position:absolute;width:12px;height:12px;border-radius:50%;background:var(--bg);border:2px solid var(--line-2)}
+.port.in{left:-7px;top:50%;margin-top:-6px}.port.out{right:-7px;top:50%;margin-top:-6px}
+.node[data-state=success] .port.out,.node[data-state=success] .port.in{border-color:var(--ok)}
+.node[data-state=running] .port{border-color:var(--coral)}
+.badge{display:flex;align-items:center;gap:.5rem;font:400 .8rem var(--mono);color:var(--muted);margin-top:.8rem;min-height:1.2rem}
+.badge i{width:14px;height:14px;border-radius:50%;border:2px solid var(--line-2);flex:none;display:grid;place-items:center;font-style:normal;font-size:9px;line-height:1}
+.node[data-state=running] .badge i{border-color:var(--line-2);border-top-color:var(--coral);animation:spin .7s linear infinite}
+.node[data-state=success] .badge{color:var(--ok)}
+.node[data-state=success] .badge i{background:var(--ok);border-color:var(--ok);color:#06241a}
+.node[data-state=success] .badge i::before{content:'✓';font-weight:700}
+.node[data-state=error] .badge{color:var(--err)}
+.node[data-state=error] .badge i{background:var(--err);border-color:var(--err);color:#2b0505}
+.node[data-state=error] .badge i::before{content:'!';font-weight:700}
+@keyframes spin{to{transform:rotate(360deg)}}
+label.f{display:block;font-size:.8rem;color:var(--muted);margin:.6rem 0 .25rem}
+input[type=text],textarea,select{width:100%;background:#15131f;border:1px solid var(--line);border-radius:8px;color:var(--text);font:400 .95rem var(--sans);padding:.6rem .7rem}
+input[type=text]::placeholder,textarea::placeholder{color:#6f6a88}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--coral);box-shadow:0 0 0 3px rgba(255,109,90,.2)}
+textarea{min-height:90px;resize:vertical;margin-top:.5rem}
+.linkbtn{background:none;border:0;color:var(--muted);font:400 .82rem var(--sans);text-decoration:underline;text-underline-offset:3px;cursor:pointer;padding:0;margin-top:.55rem}
+.linkbtn:hover{color:var(--text)}
+.runrow{position:relative;z-index:1;display:flex;justify-content:center;margin-top:2rem}
+@media(max-width:900px){
+  .nodes{grid-template-columns:1fr;gap:44px;max-width:460px;margin:0 auto}
+  .port.in{left:50%;top:-7px;margin:0 0 0 -6px}.port.out{right:auto;left:50%;top:auto;bottom:-7px;margin:0 0 0 -6px}
+}
+
+/* output */
+.out{margin-top:1.5rem;background:var(--panel);border:1px solid var(--line);border-radius:20px;overflow:hidden}
+.oh{display:flex;gap:1rem;align-items:center;padding:1rem 1.25rem;border-bottom:1px solid var(--line)}
+.oh img{width:96px;aspect-ratio:16/9;object-fit:cover;border-radius:8px;flex:none}
+.oh h2{font-size:1.1rem;line-height:1.3;margin:0}
+.oh .muted{font:400 .82rem var(--mono)}
+.muted{color:var(--muted)}
+.tabs{display:flex;gap:.25rem;padding:.6rem 1rem 0;border-bottom:1px solid var(--line);overflow-x:auto}
+.tab{background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);font:500 .95rem var(--sans);padding:.6rem .8rem;cursor:pointer;margin-bottom:-1px;white-space:nowrap}
+.tab:hover{color:var(--text)}
+.tab[aria-selected=true]{color:var(--text);border-bottom-color:var(--coral)}
+.panel{padding:1.5rem 1.25rem 1.75rem}
+.prose{max-width:70ch;line-height:1.7}
+.prose h1,.prose h2,.prose h3{font-size:1.15rem;letter-spacing:0;line-height:1.3;margin:1.3rem 0 .4rem;max-width:none}
+.prose li{margin:.25rem 0}
+.prose>:first-child{margin-top:0}.prose>:last-child{margin-bottom:0}
+.actions{display:flex;gap:.6rem;margin-top:1.25rem;flex-wrap:wrap}
+.btn.sm{padding:.4rem .8rem;font-size:.85rem;border-radius:8px}
+.msg{border:1px solid var(--line);border-radius:12px;padding:.8rem 1rem;margin-bottom:.8rem;background:var(--node)}
+.msg.user{background:transparent;border-color:rgba(255,109,90,.5)}
+.who{font:400 .78rem var(--mono);color:var(--muted);margin-bottom:.25rem}
+.chips{display:flex;gap:.5rem;flex-wrap:wrap;margin:.75rem 0}
+.chip{background:none;border:1px solid var(--line-2);color:var(--text);border-radius:999px;font:400 .88rem var(--sans);padding:.35rem .8rem;cursor:pointer}
+.chip:hover{border-color:var(--coral);color:var(--coral)}
+.chatbar{display:flex;gap:.6rem;margin-top:.5rem}
+.chatbar input{flex:1}
+.err{color:var(--err)}
+.loading::after{content:'';display:inline-block;width:.9em;height:.9em;margin-left:.5rem;border:2px solid var(--line-2);border-top-color:var(--coral);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-.1em}
+.hit{padding:.5rem 0;border-bottom:1px solid var(--line);color:var(--muted)}
+mark{background:rgba(255,109,90,.28);color:var(--text);border-radius:3px}
+.tx{max-height:340px;overflow:auto;white-space:pre-wrap;background:#13111c;border:1px solid var(--line);border-radius:10px;padding:1rem;margin-top:1rem;font:400 .9rem/1.65 var(--mono)}
+.log{list-style:none;margin:0;padding:0;font:400 .9rem var(--mono)}
+.log li{display:grid;grid-template-columns:18px 1fr auto;gap:.75rem;padding:.7rem 0;border-bottom:1px solid var(--line)}
+.log .d{width:10px;height:10px;border-radius:50%;margin-top:.4rem;background:var(--line-2)}
+.log li[data-s=success] .d{background:var(--ok)}.log li[data-s=error] .d{background:var(--err)}
+.log .det{color:var(--muted);display:block;font-size:.82rem}
+[hidden]{display:none!important}
+
+/* sections */
+section.s{padding:clamp(4rem,9vw,7rem) 0 0}
+h2.big{font-size:clamp(1.9rem,4vw,2.9rem);line-height:1.1;letter-spacing:-.03em;margin:0 0 1rem;max-width:20ch}
+.rows{margin-top:2.5rem;border-top:1px solid var(--line)}
+.rowi{display:grid;grid-template-columns:minmax(200px,1fr) 2fr;gap:2rem;padding:1.75rem 0;border-bottom:1px solid var(--line)}
+.rowi h3{margin:0;font-size:1.2rem;letter-spacing:-.01em}
+.rowi p{margin:0;color:var(--muted);max-width:52ch}
+@media(max-width:720px){.rowi{grid-template-columns:1fr;gap:.5rem}}
+details{border-bottom:1px solid var(--line);padding:1.1rem 0}
+details summary{cursor:pointer;font-weight:600;font-size:1.05rem;list-style:none;display:flex;justify-content:space-between;gap:1rem}
+details summary::-webkit-details-marker{display:none}
+details summary::after{content:'+';color:var(--coral);font-size:1.3rem;line-height:1}
+details[open] summary::after{content:'–'}
+details p{color:var(--muted);margin:.7rem 0 0;max-width:62ch}
+.cta{margin-top:clamp(4rem,9vw,7rem);padding:clamp(2.5rem,6vw,4rem);border:1px solid var(--line);border-radius:20px;background:var(--panel);display:flex;justify-content:space-between;align-items:center;gap:2rem;flex-wrap:wrap}
+.cta h2{margin:0;font-size:clamp(1.6rem,3.5vw,2.4rem);letter-spacing:-.03em;line-height:1.1;max-width:18ch}
+footer{margin-top:4rem;border-top:1px solid var(--line);padding:2rem 0 3rem;color:var(--muted);font-size:.9rem}
+footer .wrap{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+@media(prefers-reduced-motion:reduce){*{animation-duration:2s!important;transition:none!important;scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 16l.7 1.8L21.5 18.5l-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></symbol>
+</svg>
+
+<header class="top"><div class="wrap">
+  <a class="logo" href="#">
+    <svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#FF6D5A"/><path d="M8 16h6c3 0 3-6 6-6M14 16c3 0 3 6 6 6" fill="none" stroke="#2B0A05" stroke-width="2.2" stroke-linecap="round"/><circle cx="8" cy="16" r="3" fill="#fff"/><circle cx="24" cy="10" r="3" fill="#fff"/><circle cx="24" cy="22" r="3" fill="#fff"/></svg>
+    Videoflow
+  </a>
+  <nav><a href="#try">Workflow</a><a href="#why">Why it works</a><a href="#faq">FAQ</a></nav>
+  <a class="btn coral" href="#try">Try it</a>
+</div></header>
+
+<main class="wrap">
+  <section class="hero">
+    <h1>Turn any video into answers you can follow.</h1>
+    <p class="lede">Paste a YouTube link and watch it run: transcript, summary, then a chat that answers from what was actually said. Every step is visible.</p>
+  </section>
+
+  <div class="canvas" id="canvas" aria-label="Workflow">
+    <svg id="edges" aria-hidden="true"><path/><path/><path/></svg>
+    <div class="nodes">
+
+      <article class="node" id="n-trigger" data-state="idle">
+        <div class="nh"><span class="ico"><svg><use href="#i-link"/></svg></span><div><div class="nt">YouTube link</div><div class="ns">Starts the workflow</div></div></div>
+        <form id="urlForm"><input type="text" id="url" placeholder="https://youtube.com/watch?v=..." aria-label="YouTube link" autocomplete="off"></form>
+        <button type="button" class="linkbtn" id="toggleManual" aria-expanded="false">Paste a transcript instead</button>
+        <textarea id="manual" placeholder="Paste the transcript here" aria-label="Transcript" hidden></textarea>
+        <div class="badge"><i></i><span class="bt">Waiting</span></div>
+        <span class="port out"></span>
+      </article>
+
+      <article class="node link" id="n-transcript" data-state="idle">
+        <span class="port in"></span>
+        <div class="nh"><span class="ico"><svg><use href="#i-doc"/></svg></span><div><div class="nt">Get transcript</div><div class="ns">English or Hindi captions</div></div></div>
+        <div class="badge"><i></i><span class="bt">Waiting</span></div>
+        <span class="port out"></span>
+      </article>
+
+      <article class="node" id="n-summary" data-state="idle">
+        <span class="port in"></span>
+        <div class="nh"><span class="ico"><svg><use href="#i-spark"/></svg></span><div><div class="nt">Summarize</div><div class="ns">Groq, free tier</div></div></div>
+        <label class="f" for="style">Style</label>
+        <select id="style"><option value="short">Short</option><option value="detailed">Detailed</option><option value="simple">Simple (ELI15)</option></select>
+        <label class="f" for="lang">Answer language</label>
+        <select id="lang"><option>English</option><option>Hindi</option><option>Hinglish</option></select>
+        <div class="badge"><i></i><span class="bt">Waiting</span></div>
+        <span class="port out"></span>
+      </article>
+
+      <article class="node link" id="n-chat" data-state="idle">
+        <span class="port in"></span>
+        <div class="nh"><span class="ico"><svg><use href="#i-chat"/></svg></span><div><div class="nt">Chat agent</div><div class="ns">Answers from the transcript</div></div></div>
+        <div class="badge"><i></i><span class="bt">Waiting</span></div>
+      </article>
+
+    </div>
+    <div class="runrow"><button class="btn coral lg" id="run">Execute workflow</button></div>
+  </div>
+
+  <section class="out" id="output" hidden aria-live="polite">
+    <div class="oh" id="vhead" hidden>
+      <img id="thumb" alt="">
+      <div><h2 id="vtitle"></h2><div class="muted" id="vmeta"></div></div>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Output">
+      <button class="tab" role="tab" id="t-sum" aria-controls="p-sum" aria-selected="true">Summary</button>
+      <button class="tab" role="tab" id="t-chat" aria-controls="p-chat" aria-selected="false">Chat</button>
+      <button class="tab" role="tab" id="t-tx" aria-controls="p-tx" aria-selected="false">Transcript</button>
+      <button class="tab" role="tab" id="t-log" aria-controls="p-log" aria-selected="false">Run log</button>
+    </div>
+
+    <div class="panel" role="tabpanel" id="p-sum" aria-labelledby="t-sum">
+      <div id="sumOut" class="prose"></div>
+      <div class="actions"><button class="btn sm" id="dlSum" hidden>Download summary</button></div>
+    </div>
+
+    <div class="panel" role="tabpanel" id="p-chat" aria-labelledby="t-chat" hidden>
+      <div id="chatEmpty" class="muted">Run the workflow to start chatting.</div>
+      <div id="chatBox" hidden>
+        <div id="chatLog"></div>
+        <div class="chips" id="sugg">
+          <button class="chip">What are the main points?</button>
+          <button class="chip">Explain the key idea simply</button>
+          <button class="chip">What should I do after watching this?</button>
+        </div>
+        <form class="chatbar" id="chatForm">
+          <input type="text" id="q" placeholder="Ask a question about the video" aria-label="Question" autocomplete="off">
+          <button class="btn coral" type="submit" id="send">Send</button>
+        </form>
+        <div class="actions"><button class="btn sm" id="dlChat" hidden>Download chat</button><button class="btn sm" id="clearChat" hidden>Clear chat</button></div>
+      </div>
+    </div>
+
+    <div class="panel" role="tabpanel" id="p-tx" aria-labelledby="t-tx" hidden>
+      <p class="muted" id="trunc" hidden></p>
+      <input type="text" id="search" placeholder="Search the transcript" aria-label="Search the transcript">
+      <div id="hits"></div>
+      <div class="tx" id="txBox"></div>
+      <div class="actions"><button class="btn sm" id="dlTx">Download transcript</button></div>
+    </div>
+
+    <div class="panel" role="tabpanel" id="p-log" aria-labelledby="t-log" hidden>
+      <ul class="log" id="logList"></ul>
+    </div>
+  </section>
+
+  <section class="s" id="why">
+    <h2 class="big">See each step. Trust each answer.</h2>
+    <div class="rows">
+      <div class="rowi"><h3>Watch the workflow run</h3><p>Every video goes through the same steps: fetch captions, summarize, open a chat. Each step shows when it finishes and how long it took, and the run log keeps the details.</p></div>
+      <div class="rowi"><h3>Answers come from the video</h3><p>The AI reads only the transcript. When something wasn’t said in the video, it tells you instead of guessing.</p></div>
+      <div class="rowi"><h3>Change the output, not the video</h3><p>Switch between short, detailed and simple summaries, or get answers in English, Hindi or Hinglish. Changing a setting re-runs only the step it affects.</p></div>
+      <div class="rowi"><h3>Free to run and host</h3><p>FastAPI, plain JavaScript and Groq’s free tier. You can deploy it on a free Render account.</p></div>
+    </div>
+  </section>
+
+  <section class="s" id="faq">
+    <h2 class="big">Questions</h2>
+    <div class="rows" style="border:0">
+      <details><summary>Which videos work?</summary><p>Videos with English or Hindi captions turned on. If YouTube blocks the fetch or captions are off, paste the transcript into the first step instead.</p></details>
+      <details><summary>Are my videos or chats saved?</summary><p>No. The server keeps nothing. The transcript and your questions are sent to Groq to produce each answer, and your browser holds the rest until you close the tab.</p></details>
+      <details><summary>What about long videos?</summary><p>The AI reads the first 20,000 characters of the transcript to stay inside free-tier limits. The Transcript tab tells you when a video was cut.</p></details>
+      <details><summary>Why did a run fail?</summary><p>The failed step turns red and the Run log tab says why. Free-tier rate limits usually clear after a minute.</p></details>
+    </div>
+  </section>
+
+  <div class="cta">
+    <h2>Run your first video.</h2>
+    <a class="btn coral lg" href="#try" id="again">Paste a link</a>
+  </div>
+</main>
+
+<footer><div class="wrap"><span>Videoflow</span><span>Built with FastAPI and Groq</span></div></footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const NODES = ['trigger', 'transcript', 'summary', 'chat'];
+const S = { transcript: '', summaries: {}, messages: [], log: [], running: false };
+const md = t => DOMPurify.sanitize(marked.parse(t));
+const secs = ms => (ms / 1000).toFixed(1) + 's';
+
+async function api(path, body) {
+  const r = await fetch('/api/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || 'Something went wrong. Try again.');
+  return j;
+}
+function download(name, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  a.download = name; a.click(); URL.revokeObjectURL(a.href);
+}
+
+/* ---------- node status + connectors ---------- */
+function setStatus(name, state, text) {
+  const n = $('n-' + name);
+  n.dataset.state = state;
+  n.querySelector('.bt').textContent = text;
+  paintEdges();
+}
+function paintEdges() {
+  document.querySelectorAll('#edges path').forEach((p, i) => {
+    p.dataset.state = $('n-' + NODES[i + 1]).dataset.state === 'running' ? 'running'
+      : $('n-' + NODES[i]).dataset.state === 'success' && $('n-' + NODES[i + 1]).dataset.state === 'success' ? 'success' : 'idle';
+  });
+}
+const wide = matchMedia('(min-width: 901px)');
+function drawEdges() {
+  const c = $('canvas').getBoundingClientRect(), svg = $('edges');
+  svg.setAttribute('width', c.width); svg.setAttribute('height', c.height);
+  const pt = (name, kind) => {
+    const r = $('n-' + name).querySelector('.port.' + kind).getBoundingClientRect();
+    return [r.left + r.width / 2 - c.left, r.top + r.height / 2 - c.top];
+  };
+  svg.querySelectorAll('path').forEach((p, i) => {
+    const [ax, ay] = pt(NODES[i], 'out'), [bx, by] = pt(NODES[i + 1], 'in');
+    p.setAttribute('d', wide.matches
+      ? `M${ax} ${ay} C${ax + Math.max(30, (bx - ax) / 2)} ${ay}, ${bx - Math.max(30, (bx - ax) / 2)} ${by}, ${bx} ${by}`
+      : `M${ax} ${ay} C${ax} ${ay + 30}, ${bx} ${by - 30}, ${bx} ${by}`);
+  });
+}
+new ResizeObserver(drawEdges).observe($('canvas'));
+document.fonts && document.fonts.ready.then(drawEdges);
+addEventListener('load', drawEdges);
+
+/* ---------- output tabs ---------- */
+const TABS = ['sum', 'chat', 'tx', 'log'];
+function showTab(name) {
+  TABS.forEach(t => { $('t-' + t).setAttribute('aria-selected', t === name); $('p-' + t).hidden = t !== name; });
+}
+TABS.forEach(t => $('t-' + t).addEventListener('click', () => showTab(t)));
+$('n-transcript').addEventListener('click', () => S.transcript && showTab('tx'));
+$('n-chat').addEventListener('click', () => S.transcript && (showTab('chat'), $('q').focus()));
+
+/* ---------- run log ---------- */
+function logStep(name, state, detail, ms) {
+  S.log.push({ name, state, detail, ms });
+  $('logList').innerHTML = '';
+  S.log.forEach(e => {
+    const li = document.createElement('li'); li.dataset.s = e.state;
+    const d = document.createElement('span'); d.className = 'd';
+    const m = document.createElement('div'); m.textContent = e.name;
+    const det = document.createElement('span'); det.className = 'det'; det.textContent = e.detail; m.append(det);
+    const t = document.createElement('span'); t.textContent = e.ms != null ? secs(e.ms) : '';
+    li.append(d, m, t); $('logList').append(li);
+  });
+}
+
+/* ---------- workflow ---------- */
+$('toggleManual').addEventListener('click', () => {
+  const open = $('manual').hidden;
+  $('manual').hidden = !open; $('toggleManual').setAttribute('aria-expanded', open);
+  $('toggleManual').textContent = open ? 'Use a link instead' : 'Paste a transcript instead';
+  requestAnimationFrame(drawEdges);
+});
+$('urlForm').addEventListener('submit', e => { e.preventDefault(); run(); });
+$('run').addEventListener('click', run);
+
+async function run() {
+  if (S.running) return;
+  const url = $('url').value.trim(), manual = $('manual').hidden ? '' : $('manual').value.trim();
+  NODES.forEach(n => setStatus(n, 'idle', 'Waiting'));
+  S.log = []; S.summaries = {}; S.messages = []; S.transcript = '';
+  $('chatLog').innerHTML = ''; $('hits').innerHTML = ''; $('search').value = '';
+  $('output').hidden = false; $('vhead').hidden = true; $('sumOut').innerHTML = ''; $('dlSum').hidden = true;
+  $('chatBox').hidden = true; $('chatEmpty').hidden = false; $('dlChat').hidden = $('clearChat').hidden = true;
+
+  if (!manual && !/(?:v=|youtu\.be\/|shorts\/|embed\/)[A-Za-z0-9_-]{11}/.test(url)) {
+    setStatus('trigger', 'error', 'No valid link');
+    logStep('YouTube link', 'error', 'Paste a full YouTube video URL, or a transcript.');
+    showTab('log'); return;
+  }
+  S.running = true; $('run').disabled = true; $('run').textContent = 'Running...';
+  setStatus('trigger', 'success', manual ? 'Transcript pasted' : 'Link ok');
+  logStep('YouTube link', 'success', manual ? 'Using pasted transcript' : url, 0);
+  $('output').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  showTab('log');
+
+  // step 2: transcript
+  setStatus('transcript', 'running', 'Running');
+  let t0 = performance.now();
+  try {
+    const d = await api('load', { url, transcript: manual });
+    const ms = performance.now() - t0;
+    S.transcript = d.transcript;
+    setStatus('transcript', 'success', `${d.words.toLocaleString()} words · ${secs(ms)}`);
+    logStep('Get transcript', 'success', `${d.words.toLocaleString()} words`, ms);
+    $('thumb').src = d.video_id ? `https://img.youtube.com/vi/${d.video_id}/mqdefault.jpg` : '';
+    $('thumb').hidden = !d.video_id;
+    $('vtitle').textContent = d.title || 'Your video';
+    $('vmeta').textContent = `${d.words.toLocaleString()} words`;
+    $('vhead').hidden = false;
+    $('txBox').textContent = d.transcript;
+    $('trunc').hidden = !d.truncated;
+    $('trunc').textContent = `Long video: the AI only reads the first ${d.max_chars.toLocaleString()} characters.`;
+  } catch (x) {
+    setStatus('transcript', 'error', 'Failed');
+    logStep('Get transcript', 'error', x.message, performance.now() - t0);
+    S.running = false; $('run').disabled = false; $('run').textContent = 'Execute workflow'; return;
+  }
+
+  // step 3: summary
+  await summarize();
+  // step 4: chat ready
+  if (S.transcript) {
+    setStatus('chat', 'success', 'Ready to chat');
+    $('chatBox').hidden = false; $('chatEmpty').hidden = true;
+    logStep('Chat agent', 'success', 'Ask questions in the Chat tab', 0);
+  }
+  S.running = false; $('run').disabled = false; $('run').textContent = 'Execute workflow';
+  showTab('sum');
+}
+
+async function summarize() {
+  const style = $('style').value, language = $('lang').value, key = style + '|' + language;
+  if (S.summaries[key]) { $('sumOut').innerHTML = md(S.summaries[key]); $('dlSum').hidden = false; return; }
+  setStatus('summary', 'running', 'Running'); $('dlSum').hidden = true;
+  $('sumOut').innerHTML = '<p class="muted loading">Summarizing</p>';
+  const t0 = performance.now();
+  try {
+    const { text } = await api('summary', { transcript: S.transcript, style, language });
+    const ms = performance.now() - t0;
+    S.summaries[key] = text;
+    if (key !== $('style').value + '|' + $('lang').value) return;
+    $('sumOut').innerHTML = md(text); $('dlSum').hidden = false;
+    setStatus('summary', 'success', secs(ms));
+    logStep('Summarize', 'success', `${$('style').selectedOptions[0].text}, ${language}`, ms);
+  } catch (x) {
+    setStatus('summary', 'error', 'Failed');
+    logStep('Summarize', 'error', x.message, performance.now() - t0);
+    $('sumOut').innerHTML = ''; const p = document.createElement('p'); p.className = 'err'; p.textContent = x.message; $('sumOut').append(p);
+  }
+}
+['style', 'lang'].forEach(id => $(id).addEventListener('change', () => { if (S.transcript && !S.running) summarize(); }));
+$('dlSum').addEventListener('click', () => download('summary.md', S.summaries[$('style').value + '|' + $('lang').value]));
+
+/* ---------- chat ---------- */
+function addMsg(role, text, loading) {
+  const d = document.createElement('div'); d.className = 'msg ' + (role === 'user' ? 'user' : '');
+  const w = document.createElement('div'); w.className = 'who'; w.textContent = role === 'user' ? 'You' : 'Agent';
+  const b = document.createElement('div'); b.className = 'prose';
+  if (loading) { b.classList.add('muted', 'loading'); b.textContent = 'Thinking'; }
+  else if (role === 'user') b.textContent = text; else b.innerHTML = md(text);
+  d.append(w, b); $('chatLog').append(d); d.scrollIntoView({ block: 'nearest' });
+  return b;
+}
+async function ask(q) {
+  q = q.trim(); if (!q || !S.transcript) return;
+  S.messages.push({ role: 'user', content: q }); addMsg('user', q);
+  const b = addMsg('assistant', '', true); $('send').disabled = true;
+  setStatus('chat', 'running', 'Answering');
+  try {
+    const { text } = await api('chat', { transcript: S.transcript, messages: S.messages, language: $('lang').value });
+    S.messages.push({ role: 'assistant', content: text });
+    b.className = 'prose'; b.innerHTML = md(text);
+    setStatus('chat', 'success', `${S.messages.length / 2} answered`);
+  } catch (x) {
+    S.messages.pop(); b.className = 'prose err'; b.textContent = x.message;
+    setStatus('chat', 'error', 'Failed');
+    logStep('Chat agent', 'error', x.message, null);
+  }
+  $('send').disabled = false; $('dlChat').hidden = $('clearChat').hidden = false;
+}
+$('chatForm').addEventListener('submit', e => { e.preventDefault(); const q = $('q').value; $('q').value = ''; ask(q); });
+$('sugg').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) ask(b.textContent); });
+$('clearChat').addEventListener('click', () => { S.messages = []; $('chatLog').innerHTML = ''; $('dlChat').hidden = $('clearChat').hidden = true; setStatus('chat', 'success', 'Ready to chat'); });
+$('dlChat').addEventListener('click', () => download('chat.txt', S.messages.map(m => (m.role === 'user' ? 'You' : 'Agent') + ': ' + m.content).join('\n\n')));
+
+/* ---------- transcript ---------- */
+$('search').addEventListener('input', e => {
+  const k = e.target.value.trim(), box = $('hits'); box.innerHTML = '';
+  if (!k) return;
+  const re = new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), hits = [];
+  let m; while ((m = re.exec(S.transcript)) && hits.length < 200) hits.push(m.index);
+  const n = document.createElement('p'); n.className = 'muted'; n.textContent = `${hits.length} match(es)`; box.append(n);
+  hits.slice(0, 10).forEach(p => {
+    const d = document.createElement('div'); d.className = 'hit';
+    const mk = document.createElement('mark'); mk.textContent = S.transcript.substr(p, k.length);
+    d.append('…' + S.transcript.slice(Math.max(0, p - 80), p), mk, S.transcript.slice(p + k.length, p + k.length + 80) + '…'); box.append(d);
+  });
+});
+$('dlTx').addEventListener('click', () => download('transcript.txt', S.transcript));
+$('again').addEventListener('click', () => setTimeout(() => $('url').focus(), 400));
+</script>
+</body>
+</html>
